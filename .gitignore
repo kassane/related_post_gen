@@ -42,3 +42,4 @@ cpp/main
 build
 lake-packages/
 lake-manifest.json
+*.olean
