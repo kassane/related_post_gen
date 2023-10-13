@@ -1,13 +1,14 @@
 name: Benchmark
 
 on:
+  push:
     # pull_request:
     #     branches:
     #         - main
     #     types:
     #         - closed
 
-    workflow_dispatch:
+    # workflow_dispatch:
 
 jobs:
     run-benchmarks:
@@ -107,6 +108,14 @@ jobs:
               with:
                   ocaml-compiler: "5.1"
 
+            - name: Install Lean 4
+              run: |
+                curl -O --location https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh
+                chmod u+x elan-init.sh
+                ./elan-init.sh -y --default-toolchain leanprover/lean4:stable
+                echo "Adding location $HOME/.elan/bin to PATH..."
+                echo "$HOME/.elan/bin" >> $GITHUB_PATH
+            
             - name: Run Benchmark (5k posts)
               run: ./run.sh all raw_results.md
 

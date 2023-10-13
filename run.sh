@@ -574,6 +574,19 @@ run_d_con() {
     check_output "related_posts_d_con.json"
 }
 
+run_lean() {
+    echo "Running Lean 4" &&
+        cd ./lean4 &&
+        lake build
+    if [ $HYPER == 1 ]; then
+        capture "Lean4" hyperfine -r $runs -w $warmup --show-output "./build/bin/lean4"
+    else
+        command ${time} -f '%es %Mk' ./build/bin/lean4
+    fi
+
+    check_output "related_posts_lean4.json"
+}
+
 check_output() {
     cd ..
 
@@ -742,6 +755,10 @@ elif [ "$first_arg" = "d_con" ]; then
 
     run_d_con
 
+elif ["$first_arg" = "lean4"]; then
+
+    run_lean
+
 elif [ "$first_arg" = "all" ]; then
 
     echo -e "Running all\n" &&
@@ -753,6 +770,7 @@ elif [ "$first_arg" = "all" ]; then
         run_d_con || echo -e "\n" &&
         run_python || echo -e "\n" &&
         run_python_np || echo -e "\n" &&
+        run_lean || echo -e "\n" &&
 
         # run_python_numba || echo -e "\n" && break rules but very interesting
         run_crystal || echo -e "\n" &&
@@ -804,6 +822,8 @@ elif [ "$first_arg" = "clean" ]; then
         cd swift_con && swift package reset &&
         cd .. &&
         cd zig && rm -f main main.o &&
+        cd .. &&
+        cd lean4 && lake clean &&
         cd ..
     cd java && mvn -q -B clean &&
         cd ..
@@ -811,6 +831,6 @@ elif [ "$first_arg" = "clean" ]; then
 
 else
 
-    echo "Valid args: go | go_con | rust | rust_con | d | d_con | py | numpy | numba | numba_con | cr | zig | odin | jq | julia | v | dart | swift | swift_con | node | bun | deno | java | java_graal | java_graal_con | nim | luajit | lua | fsharp | fsharp_aot | fsharp_con | csharp | csharp_aot | all | clean. Unknown argument: $first_arg"
+    echo "Valid args: go | go_con | rust | rust_con | d | d_con | py | numpy | numba | numba_con | cr | zig | odin | jq | julia | v | dart | swift | swift_con | node | bun | deno | java | java_graal | java_graal_con | nim | luajit | lua | fsharp | fsharp_aot | fsharp_con | csharp | csharp_aot | lean4 | all | clean. Unknown argument: $first_arg"
 
 fi

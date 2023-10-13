@@ -37,3 +37,8 @@ nim/src/related
 
 .fake
 cpp/main
+
+# Lean
+build
+lake-packages/
+lake-manifest.json
