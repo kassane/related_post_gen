@@ -4,6 +4,7 @@ const Post = struct { _id: []const u8, title: []const u8, tags: [][]const u8 };
 const Posts = []Post;
 const TopPosts = struct { _id: *const []const u8, tags: *const [][]const u8, related: []*Post };
 const stdout = std.io.getStdOut().writer();
+const fxhash = @import("fxhash.zig");
 
 inline fn top5(related: []*Post, score: []u8, ps: []Post) void {
     var top_5 = [5]u8{ 0, 0, 0, 0, 0 };
@@ -13,19 +14,14 @@ inline fn top5(related: []*Post, score: []u8, ps: []Post) void {
         if (count > min_tags) {
 
             // Find the position to insert
-            var pos: usize = 0;
-            while (top_5[pos] >= count) {
-                pos += 1;
+            var pos: i8 = 3;
+            while (pos >= 0 and count > top_5[@intCast(pos)]) : (pos -= 1) {
+                top_5[@intCast(pos + 1)] = top_5[@intCast(pos)];
+                related[@intCast(pos + 1)] = related[@intCast(pos)];
             }
 
-            // Shift and insert
-            var shift: usize = 4;
-            while (shift > pos) : (shift -= 1) {
-                top_5[shift] = top_5[shift - 1];
-                related[shift] = related[shift - 1];
-            }
-            top_5[pos] = count;
-            related[pos] = &ps[j];
+            top_5[@intCast(pos + 1)] = count;
+            related[@intCast(pos + 1)] = &ps[j];
             min_tags = top_5[4];
         }
     }
@@ -34,9 +30,6 @@ inline fn top5(related: []*Post, score: []u8, ps: []Post) void {
 pub fn main() !void {
     const file = try std.fs.cwd().openFile("../posts.json", .{});
     defer file.close();
-    const ArrPosts = std.ArrayList(usize);
-    var map = std.StringHashMap(ArrPosts).init(allocator);
-    defer map.deinit();
     var json_reader = std.json.reader(allocator, file.reader());
     defer json_reader.deinit();
     const parsed = try std.json.parseFromTokenSource(Posts, allocator, &json_reader, .{});
@@ -44,14 +37,18 @@ pub fn main() !void {
 
     const start = try std.time.Instant.now();
 
+    const ArrPosts = std.ArrayList(u32);
+    var map = fxhash.StringHashMap(ArrPosts).init(allocator);
+    defer map.deinit();
+
     for (parsed.value, 0..) |post_ele, i| {
         for (post_ele.tags) |tag| {
             var get_or_put = try map.getOrPut(tag);
             if (get_or_put.found_existing) {
-                try get_or_put.value_ptr.*.append(i);
+                try get_or_put.value_ptr.*.append(@intCast(i));
             } else {
                 var temp = ArrPosts.init(allocator);
-                try temp.append(i);
+                try temp.append(@intCast(i));
                 get_or_put.value_ptr.* = temp;
             }
         }

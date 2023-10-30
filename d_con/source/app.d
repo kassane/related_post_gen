@@ -1,8 +1,9 @@
 import std.stdio : writeln, toFile;
 import std.datetime.stopwatch : StopWatch, AutoStart;
-import asdf.serialization : deserialize, serializeToJson;
 import std.file : readText;
 import std.parallelism : taskPool, parallel;
+import ldc.simd;
+import asdf.serialization : deserialize, serializeToJson;
 
 enum TopN = 5;
 
@@ -26,56 +27,73 @@ struct PostsWithSharedTags
 	ubyte sharedTags;
 }
 
-PostsWithSharedTags[TopN] top5;
-Post[TopN] topPosts;
+enum vSize = 16;
+alias hashmap = size_t[][string];
+alias vec_u = __vector(ubyte[vSize]);
 
 void main()
 {
+	import core.memory : GC;
+
 	auto jsonText = readText("../posts.json");
 	auto posts = deserialize!(Post[])(jsonText);
-	int postsCount = cast(int) posts.length;
-	auto relatedPosts = new RelatedPosts[postsCount];
-	size_t[][string] tagMap;
+
+	GC.collect();
 
 	auto sw = StopWatch(AutoStart.yes);
+
+	int postsCount = cast(int) posts.length;
+	auto relatedPosts = new RelatedPosts[postsCount];
+	hashmap tagMap;
 
 	foreach (i, post; posts)
 		foreach (tag; post.tags)
 			tagMap[tag] ~= i;
 
-	auto taggedPostsCountThreadPool = taskPool.workerLocalStorage(new ubyte[postsCount]);
+	auto nVectors = (postsCount + vSize - 1) / vSize;
+	auto taggedPostsVecThreadPool = taskPool.workerLocalStorage(new vec_u[nVectors]);
 
-	foreach (k, ref post; posts.parallel)
+	foreach (k, post; parallel(posts, 1))
 	{
-		ubyte[] taggedPostsCount = taggedPostsCountThreadPool.get;
+		PostsWithSharedTags[TopN] top5;
+
+		auto taggedPostsVec = taggedPostsVecThreadPool.get;
+		auto taggedPostsCount = cast(ubyte[]) taggedPostsVec;
 		taggedPostsCount[] = 0;
 
 		foreach (tag; post.tags)
 			foreach (idx; tagMap[tag])
-				taggedPostsCount.ptr[idx]++;
+				taggedPostsCount[idx]++;
 
 		taggedPostsCount[k] = 0;
 
-		top5[] = PostsWithSharedTags(0, 0);
+		vec_u minTags = 0;
 
-		ubyte minTags = 0;
-		foreach (j, count; taggedPostsCount)
+		foreach (vecIdx, vecElem; taggedPostsVec)
 		{
-			if (count > minTags)
+			if ((vecElem > minTags) is vec_u.init)
+				continue;
+
+			foreach (l, el; vecElem)
 			{
-				int upperBound = TopN - 2;
-
-				while (upperBound >= 0 && count > top5[upperBound].sharedTags)
+				if (el > minTags[0])
 				{
-					top5[upperBound + 1] = top5[upperBound];
-					upperBound--;
+					int upperBound = TopN - 2;
+
+					while (upperBound >= 0 && el > top5[upperBound].sharedTags)
+					{
+						top5[upperBound + 1] = top5[upperBound];
+						upperBound--;
+					}
+
+					top5[upperBound + 1] = PostsWithSharedTags(vecIdx * vSize + l, el);
+
+					minTags[] = top5[TopN - 1].sharedTags;
 				}
-
-				top5[upperBound + 1] = PostsWithSharedTags(j, count);
-
-				minTags = top5[TopN - 1].sharedTags;
 			}
 		}
+
+		Post[TopN] topPosts;
 
 		foreach (i, t; top5)
 			topPosts[i] = posts[t.post];

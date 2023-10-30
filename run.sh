@@ -35,7 +35,17 @@ if command -v hyperfine &>/dev/null; then
     HYPER=1
 fi
 
-time="$(which gtime || which time)"
+time="$(which gtime 2>/dev/null || which time 2>/dev/null)"
+if [[ -z "${time}" && -z "$(which hyperfine 2>/dev/null)" ]]; then
+    echo 'time, gtime, or hyperfine must be available in $PATH'
+    exit 1
+fi
+
+if [[ -n "$(which nproc 2>/dev/null)" ]]; then
+    nproc=$(nproc)
+else
+    nproc=4
+fi
 
 # capture the output of a command and write it to stout or to a file
 capture() {
@@ -71,7 +81,6 @@ run_go() {
         fi
 
     check_output "related_posts_go.json"
-
 }
 
 run_go_concurrent() {
@@ -87,6 +96,36 @@ run_go_concurrent() {
     check_output "related_posts_go_con.json"
 }
 
+run_cpp() {
+    echo "Running C++" &&
+        cd ./cpp &&
+        if [ -z "$appendToFile" ]; then # only build on 5k run
+            clang++ -std=c++11 -I./include -O3 main.cpp -o main
+        fi &&
+        if [ $HYPER == 1 ]; then
+            capture "C++" hyperfine -r $runs -w $warmup --show-output "./main"
+        else
+            command ${time} -f '%es %Mk' ./main
+        fi
+
+    check_output "related_posts_cpp.json"
+}
+
+run_cpp_con() {
+    echo "Running C++ Concurrent" &&
+        cd ./cpp &&
+        if [ -z "$appendToFile" ]; then # only build on 5k run
+            clang++ -std=c++11 -pthread -I./include -O3 main_con.cpp -o main_con
+        fi &&
+        if [ $HYPER == 1 ]; then
+            capture "C++ Concurrent" hyperfine -r $runs -w $warmup --show-output "./main_con"
+        else
+            command ${time} -f '%es %Mk' ./main_con
+        fi
+
+    check_output "related_posts_cpp_con.json"
+}
+
 run_rust() {
     echo "Running Rust" &&
         cd ./rust &&
@@ -98,19 +137,6 @@ run_rust() {
         fi
 
     check_output "related_posts_rust.json"
-}
-
-run_cpp() {
-    echo "Running C++" &&
-        cd ./cpp &&
-        g++ -std=c++11 -I./include -O3 main.cpp -o main &&
-        if [ $HYPER == 1 ]; then
-            capture "cpp" hyperfine -r $runs -w $warmup --show-output "./main"
-        else
-            command ${time} -f '%es %Mk' ./main
-        fi
-
-    check_output "related_posts_cpp.json"
 }
 
 run_rust_con() {
@@ -216,12 +242,14 @@ run_crystal() {
 run_zig() {
     echo "Running Zig" &&
         cd ./zig &&
-        zig build-exe -lc -O ReleaseSafe main.zig
-    if [ $HYPER == 1 ]; then
-        capture "Zig" hyperfine -r $runs -w $warmup --show-output "./main"
-    else
-        command ${time} -f '%es %Mk' ./main
-    fi
+        if [ -z "$appendToFile" ]; then # only build on 5k run
+            zig build-exe -lc -O ReleaseSafe main.zig
+        fi &&
+        if [ $HYPER == 1 ]; then
+            capture "Zig" hyperfine -r $runs -w $warmup --show-output "./main"
+        else
+            command ${time} -f '%es %Mk' ./main
+        fi
 
     check_output "related_posts_zig.json"
 }
@@ -229,24 +257,39 @@ run_zig() {
 run_julia() {
     echo "Running Julia" &&
         cd ./julia &&
-        julia -e 'using Pkg; Pkg.add.(["JSON3", "StructTypes", "StaticArrays"])' &&
+        julia -e 'using Pkg; Pkg.activate("Related"); Pkg.instantiate()' &&
         if [ $HYPER == 1 ]; then
-            capture "Julia" hyperfine -r $runs -w $warmup --show-output "julia related.jl"
+
+            capture "Julia" hyperfine -r $runs -w $warmup --show-output "julia -O3 --project=Related -e \"using Related; main()\""
         else
-            command ${time} -f '%es %Mk' julia related.jl
+            command ${time} -f '%es %Mk' julia -O3 --project=Related -e "using Related; main()"
+
         fi
 
     check_output "related_posts_julia.json"
 }
 
+run_julia_highly_optimized() {
+    echo "Running Julia Highly Optimized" &&
+        cd ./julia_highly_optimized &&
+        julia -e 'using Pkg; Pkg.activate("RelatedHO"); Pkg.instantiate()' &&
+        if [ $HYPER == 1 ]; then
+            capture "Julia HO" hyperfine -r $runs -w $warmup --show-output "julia --project=RelatedHO -e \"using RelatedHO; main()\""
+        else
+            command ${time} -f '%es %Mk' julia --project=RelatedHO -e "using RelatedHO; main()"
+        fi
+
+    check_output "related_posts_julia_highly_optimized.json"
+}
+
 run_julia_con() {
     echo "Running Julia Concurrent" &&
         cd ./julia_con &&
-        julia -e 'using Pkg; Pkg.add.(["JSON3", "StructTypes", "StaticArrays", "ChunkSplitters"])' &&
+        julia -e 'using Pkg; Pkg.activate("RelatedCon"); Pkg.instantiate()' &&
         if [ $HYPER == 1 ]; then
-            capture "Julia Concurrent" hyperfine -r $runs -w $warmup --show-output "julia --threads auto related.jl"
+            capture "Julia Concurrent" hyperfine -r $runs -w $warmup --show-output "julia --threads=auto --project=RelatedCon -e \"using RelatedCon; main()\""
         else
-            command ${time} -f '%es %Mk' julia --threads auto related.jl
+            command ${time} -f '%es %Mk' julia --threads auto --project=RelatedCon -e "using RelatedCon; main()"
         fi
 
     check_output "related_posts_julia_con.json"
@@ -306,7 +349,9 @@ run_dart() {
 run_dart_aot() {
     echo "Running Dart AOT" &&
         cd ./dart &&
-        dart compile exe related.dart -o related &&
+        if [ -z "$appendToFile" ]; then # only build on 5k run
+            dart compile exe related.dart -o related
+        fi &&
         if [ $HYPER == 1 ]; then
             capture "Dart AOT" hyperfine -r $runs -w $warmup --show-output "./related"
         else
@@ -379,8 +424,10 @@ run_java() {
     VM_OPTIONS="-XX:+UseSerialGC"
     echo "Running Java (JIT)" &&
         cd ./java &&
-        java -version &&
-        mvn -q -B -Pjvm clean package &&
+        if [ -z "$appendToFile" ]; then # only build on 5k run
+            java -version &&
+                mvn -q -B -Pjvm clean package
+        fi &&
         if [ $HYPER == 1 ]; then
             capture "Java (JIT)" hyperfine -r $runs -w $warmup --show-output "java $VM_OPTIONS -jar ./target/main.jar"
         else
@@ -426,26 +473,44 @@ run_java_graal_con() {
 run_nim() {
     echo "Running Nim" &&
         cd ./nim &&
-        nimble install -y &&
-        nim compile -d:release --threads:off --passL:"-flto -fprofile-generate" --passC:"-flto -fprofile-generate" src/related.nim &&
-        ./src/related &&
-        nim compile -d:release --threads:off --passL:"-flto -fprofile-use" --passC:"-flto -fprofile-use" src/related.nim &&
+        if [ -z "$appendToFile" ]; then # only build on 5k run
+            nimble -y install -d &&
+                nimble build -d:release
+        fi &&
         if [ $HYPER == 1 ]; then
-            capture "Nim" hyperfine -r $runs -w $warmup --show-output "./src/related"
+            capture "Nim" hyperfine -r $runs -w $warmup --show-output "./related"
         else
-            command ${time} -f '%es %Mk' ./src/related
+            command ${time} -f '%es %Mk' ./related
         fi
 
     check_output "related_posts_nim.json"
 }
 
+run_nim_con() {
+    echo "Running Nim Concurrent" &&
+        cd ./nim_con &&
+        if [ -z "$appendToFile" ]; then # only build on 5k run
+            nimble -y install -d &&
+                ./build.sh clang
+        fi &&
+        if [ $HYPER == 1 ]; then
+            capture "Nim Concurrent" hyperfine -r $runs -w $warmup --show-output "./build/related_con"
+        else
+            command ${time} -f '%es %Mk' ./build/related_con
+        fi
+
+    check_output "related_posts_nim_con.json"
+}
+
 run_fsharp() {
     echo "Running FSharp (JIT)" &&
         cd ./fsharp &&
-        dotnet restore &&
-        dotnet publish -c release &&
+        if [ -z "$appendToFile" ]; then # only build on 5k run
+            dotnet restore &&
+                dotnet publish -c release
+        fi &&
         if [ $HYPER == 1 ]; then
-            capture "F#" hyperfine -r $runs -w $warmup --show-output "./bin/release/net8.0/fsharp"
+            capture "F# (JIT)" hyperfine -r $runs -w $warmup --show-output "./bin/release/net8.0/fsharp"
         else
             command ${time} -f '%es %Mk' ./bin/release/net8.0/fsharp
         fi
@@ -456,8 +521,10 @@ run_fsharp() {
 run_fsharp_aot() {
     echo "Running FSharp (AOT)" &&
         cd ./fsharp &&
-        dotnet restore &&
-        dotnet publish -c release --self-contained -p PublishAot=true -o "bin/release/net8.0/aot" &&
+        if [ -z "$appendToFile" ]; then # only build on 5k run
+            dotnet restore &&
+                dotnet publish -c release --self-contained -p PublishAot=true -o "bin/release/net8.0/aot"
+        fi &&
         if [ $HYPER == 1 ]; then
             capture "F# (AOT)" hyperfine -r $runs -w $warmup --show-output "./bin/release/net8.0/aot/fsharp"
         else
@@ -467,10 +534,44 @@ run_fsharp_aot() {
     check_output "related_posts_fsharp.json"
 }
 
+run_fsharp_con() {
+    echo "Running FSharp Concurrent" &&
+        cd ./fsharp_con &&
+        if [ -z "$appendToFile" ]; then # only build on 5k run
+            dotnet restore &&
+                dotnet publish -c release
+        fi &&
+        if [ $HYPER == 1 ]; then
+            capture "F# Concurrent (JIT)" hyperfine -r $runs -w $warmup --show-output "./bin/release/net8.0/fsharp_con"
+        else
+            command ${time} -f '%es %Mk' ./bin/release/net8.0/fsharp_con
+        fi
+
+    check_output "related_posts_fsharp_con.json"
+}
+
+run_fsharp_con_aot() {
+    echo "Running FSharp Concurrent (AOT)" &&
+        cd ./fsharp_con &&
+        if [ -z "$appendToFile" ]; then # subsequent runs
+            dotnet restore &&
+                dotnet publish -c release --self-contained -p PublishAot=true -o "bin/release/net8.0/aot"
+        fi &&
+        if [ $HYPER == 1 ]; then
+            capture "F# Concurrent (AOT)" hyperfine -r $runs -w $warmup --show-output "./bin/release/net8.0/aot/fsharp_con"
+        else
+            command ${time} -f '%es %Mk' ./bin/release/net8.0/aot/fsharp_con
+        fi
+
+    check_output "related_posts_fsharp_con.json"
+}
+
 run_csharp() {
     echo "Running CSharp (JIT)" &&
         cd ./csharp &&
-        dotnet publish -c release --self-contained -o "bin/release/net8.0/jit" &&
+        if [ -z "$appendToFile" ]; then # subsequent runs
+            dotnet publish -c release --self-contained -o "bin/release/net8.0/jit"
+        fi &&
         if [ $HYPER == 1 ]; then
             capture "C# (JIT)" hyperfine -r $runs -w $warmup --show-output "./bin/release/net8.0/jit/related"
         else
@@ -483,7 +584,9 @@ run_csharp() {
 run_csharp_aot() {
     echo "Running CSharp (AOT)" &&
         cd ./csharp &&
-        dotnet publish -c release --self-contained -p PublishAot=true -o "bin/release/net8.0/aot" &&
+        if [ -z "$appendToFile" ]; then # subsequent runs
+            dotnet publish -c release --self-contained -p PublishAot=true -o "bin/release/net8.0/aot"
+        fi &&
         if [ $HYPER == 1 ]; then
             capture "C# (AOT)" hyperfine -r $runs -w $warmup --show-output "./bin/release/net8.0/aot/related"
         else
@@ -493,18 +596,34 @@ run_csharp_aot() {
     check_output "related_posts_csharp.json"
 }
 
-run_fsharp_con() {
-    echo "Running FSharp" &&
-        cd ./fsharp_con &&
-        dotnet restore &&
-        dotnet publish -c release &&
+run_csharp_con() {
+    echo "Running CSharp Concurrent (JIT)" &&
+        cd ./csharp_con &&
+        if [ -z "$appendToFile" ]; then # subsequent runs
+            dotnet publish -c release --self-contained -o "bin/release/net8.0/jit"
+        fi &&
         if [ $HYPER == 1 ]; then
-            capture "F# Concurrent" hyperfine -r $runs -w $warmup --show-output "./bin/release/net8.0/fsharp_con"
+            capture "C# Concurrent (JIT)" hyperfine -r $runs -w $warmup --show-output "./bin/release/net8.0/jit/related"
         else
-            command ${time} -f '%es %Mk' ./bin/release/net8.0/fsharp_con
+            command ${time} -f '%es %Mk' ./bin/release/net8.0/jit/related
         fi
 
-    check_output "related_posts_fsharp_con.json"
+    check_output "related_posts_csharp_con.json"
+}
+
+run_csharp_con_aot() {
+    echo "Running CSharp Concurrent (AOT)" &&
+        cd ./csharp_con &&
+        if [ -z "$appendToFile" ]; then # subsequent runs
+            dotnet publish -c release --self-contained -p PublishAot=true -o "bin/release/net8.0/aot"
+        fi &&
+        if [ $HYPER == 1 ]; then
+            capture "C# Concurrent (AOT)" hyperfine -r $runs -w $warmup --show-output "./bin/release/net8.0/aot/related"
+        else
+            command ${time} -f '%es %Mk' ./bin/release/net8.0/aot/related
+        fi
+
+    check_output "related_posts_csharp_con.json"
 }
 
 run_luajit() {
@@ -537,8 +656,10 @@ run_lua() {
 run_ocaml() {
     echo "Running Ocaml" &&
         cd ./ocaml &&
-        opam install . --deps-only -y &&
-        opam exec -- dune build &&
+        if [ -z "$appendToFile" ]; then # only build on 5k run
+            opam install . --deps-only -y &&
+                opam exec -- dune build
+        fi &&
         if [ $HYPER == 1 ]; then
             capture "ocaml" hyperfine -r $runs -w $warmup --show-output "./_build/default/bin/main.exe"
         else
@@ -546,6 +667,19 @@ run_ocaml() {
         fi
 
     check_output "related_posts_ocaml.json"
+}
+
+run_haskell() {
+    echo "Running Haskell" &&
+        cd ./haskell &&
+        ./main.hs &&
+        if [ $HYPER == 1 ]; then
+            capture "haskell" hyperfine -r $runs -w $warmup --show-output "./main"
+        else
+            command time -f '%es %Mk' ./main
+        fi
+
+    check_output "related_posts_haskell.json"
 }
 
 run_d() {
@@ -587,6 +721,44 @@ run_lean() {
     check_output "related_posts_lean4.json"
 }
 
+run_erlang() {
+    echo "Running Erlang" &&
+        cd ./erlang &&
+        rebar3 escriptize
+    if [ $HYPER == 1 ]; then
+        capture "Erlang" hyperfine -r $runs -w $warmup --show-output "_build/default/bin/related_erl"
+    else
+        command ${time} -f '%es %Mk' ./_build/default/bin/related_erl
+    fi
+
+    check_output "related_posts_erlang.json"
+}
+
+run_clojure() {
+    echo "Running Clojure" &&
+        cd ./clojure &&
+        lein uberjar
+    if [ $HYPER == 1 ]; then
+        capture "Clojure" hyperfine -r $runs -w $warmup --show-output "java $VM_OPTIONS -jar ./target/related.jar"
+    else
+        command ${time} -f '%es %Mk' java $VM_OPTIONS -jar ./target/related.jar
+    fi
+
+    check_output "related_posts_clj.json"
+}
+
+run_ruby() {
+    echo "Running ruby" &&
+        cd ./ruby &&
+        if [ $HYPER == 1 ]; then
+            capture "Ruby" hyperfine -r $runs -w $warmup --show-output "ruby related.rb"
+        else
+            command ${time} -f '%es %Mk' ruby related.rb
+        fi
+
+    check_output "related_posts_ruby.json"
+}
+
 check_output() {
     cd ..
 
@@ -614,6 +786,10 @@ elif [ "$first_arg" = "go_con" ]; then
 elif [ "$first_arg" = "cpp" ]; then
 
     run_cpp
+
+elif [ "$first_arg" = "cpp_con" ]; then
+
+    run_cpp_con
 
 elif [ "$first_arg" = "rust" ]; then
 
@@ -650,6 +826,10 @@ elif [ "$first_arg" = "zig" ]; then
 elif [ "$first_arg" = "julia" ]; then
 
     run_julia
+
+elif [ "$first_arg" = "julia_highly_optimized" ]; then
+
+    run_julia_highly_optimized
 
 elif [ "$first_arg" = "julia_con" ]; then
 
@@ -715,6 +895,10 @@ elif [ "$first_arg" = "nim" ]; then
 
     run_nim
 
+elif [ "$first_arg" = "nim_con" ]; then
+
+    run_nim_con
+
 elif [ "$first_arg" = "fsharp" ]; then
 
     run_fsharp
@@ -731,9 +915,21 @@ elif [ "$first_arg" = "csharp_aot" ]; then
 
     run_csharp_aot
 
+elif [ "$first_arg" = "csharp_con" ]; then
+
+    run_csharp_con
+
+elif [ "$first_arg" = "csharp_con_aot" ]; then
+
+    run_csharp_con_aot
+
 elif [ "$first_arg" = "fsharp_con" ]; then
 
     run_fsharp_con
+
+elif [ "$first_arg" = "fsharp_con_aot" ]; then
+
+    run_fsharp_con_aot
 
 elif [ "$first_arg" = "luajit" ]; then
 
@@ -747,6 +943,10 @@ elif [ "$first_arg" = "ocaml" ]; then
 
     run_ocaml
 
+elif [ "$first_arg" = "haskell" ]; then
+
+    run_haskell
+
 elif [ "$first_arg" = "d" ]; then
 
     run_d
@@ -759,6 +959,18 @@ elif ["$first_arg" = "lean4"]; then
 
     run_lean
 
+elif [ "$first_arg" = "erlang" ]; then
+
+    run_erlang
+
+elif [ "$first_arg" = "clj" ]; then
+
+    run_clojure
+
+elif [ "$first_arg" = "ruby" ]; then
+
+    run_ruby
+
 elif [ "$first_arg" = "all" ]; then
 
     echo -e "Running all\n" &&
@@ -768,6 +980,8 @@ elif [ "$first_arg" = "all" ]; then
         run_rust_con || echo -e "\n" &&
         run_d || echo -e "\n" &&
         run_d_con || echo -e "\n" &&
+        run_cpp || echo -e "\n" &&
+        run_cpp_con || echo -e "\n" &&
         run_python || echo -e "\n" &&
         run_python_np || echo -e "\n" &&
         run_lean || echo -e "\n" &&
@@ -776,6 +990,7 @@ elif [ "$first_arg" = "all" ]; then
         run_crystal || echo -e "\n" &&
         run_zig || echo -e "\n" &&
         run_julia || echo -e "\n" &&
+        run_julia_highly_optimized || echo -e "\n" &&
         run_julia_con || echo -e "\n" &&
         run_odin || echo -e "\n" &&
         run_vlang || echo -e "\n" &&
@@ -790,14 +1005,20 @@ elif [ "$first_arg" = "all" ]; then
         run_java_graal || echo -e "\n" &&
         run_java_graal_con || echo -e "\n" &&
         run_nim || echo -e "\n" &&
+        run_nim_con || echo -e "\n" &&
         run_fsharp || echo -e "\n" &&
         run_fsharp_con || echo -e "\n" &&
+        run_fsharp_con_aot || echo -e "\n" &&
         run_fsharp_aot || echo -e "\n" &&
         run_csharp || echo -e "\n" &&
         run_csharp_aot || echo -e "\n" &&
+        run_csharp_con || echo -e "\n" &&
+        run_csharp_con_aot || echo -e "\n" &&
         run_luajit || echo -e "\n" &&
         run_lua || echo -e "\n" &&
         run_ocaml || echo -e "\n" &&
+        run_erlang || echo -e "\n" &&
+        run_ruby || echo -e "\n" &&
         echo -e "Finished running all\n"
 
 elif [ "$first_arg" = "clean" ]; then
@@ -815,6 +1036,8 @@ elif [ "$first_arg" = "clean" ]; then
         cd .. &&
         cd d_con && rm -f related &&
         cd .. &&
+        cd erlang && rm -rf _build/ rebar.lock &&
+        cd .. &&
         cd python && rm -rf venv/ &&
         cd .. &&
         cd swift && swift package reset &&
@@ -831,6 +1054,6 @@ elif [ "$first_arg" = "clean" ]; then
 
 else
 
-    echo "Valid args: go | go_con | rust | rust_con | d | d_con | py | numpy | numba | numba_con | cr | zig | odin | jq | julia | v | dart | swift | swift_con | node | bun | deno | java | java_graal | java_graal_con | nim | luajit | lua | fsharp | fsharp_aot | fsharp_con | csharp | csharp_aot | lean4 | all | clean. Unknown argument: $first_arg"
+    echo "Valid args: go | go_con | rust | rust_con | d | d_con | py | numpy | numba | numba_con | cr | zig | odin | jq | julia | julia_highly_optimized | julia_con | v | dart | swift | swift_con | node | bun | deno | java | java_graal | java_graal_con | nim | luajit | lua | fsharp | fsharp_aot | fsharp_con | csharp | csharp_aot | lean4 | all | clean. Unknown argument: $first_arg"
 
 fi

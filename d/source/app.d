@@ -29,13 +29,14 @@ void main()
 {
 	auto jsonText = readText("../posts.json");
 	auto posts = deserialize!(Post[])(jsonText);
+
+	auto sw = StopWatch(AutoStart.yes);
+
 	int postsCount = cast(int) posts.length;
 	auto relatedPosts = new RelatedPosts[postsCount];
 	auto taggedPostsCount = new ubyte[postsCount];
 	Post[TopN] topPosts;
 	size_t[][string] tagMap;
-
-	auto sw = StopWatch(AutoStart.yes);
 
 	foreach (i, post; posts)
 		foreach (tag; post.tags)
@@ -49,7 +50,7 @@ void main()
 
 		foreach (tag; post.tags)
 			foreach (idx; tagMap[tag])
-				taggedPostsCount.ptr[idx]++;
+				taggedPostsCount[idx]++;
 
 		taggedPostsCount[k] = 0;
 

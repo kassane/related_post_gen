@@ -1,25 +1,10 @@
-using JSON3
-using StructTypes
-using Dates
-using StaticArrays
+module Related
 
-# warmup is done by hyperfine
+using JSON3, StructTypes, Dates, StaticArrays
 
-function relatedIO()
-    json_string = read("../posts.json", String)
-    posts = JSON3.read(json_string, Vector{PostData})    
+export main
 
-    related(posts)
-
-    start = now()
-    all_related_posts = related(posts)
-    println("Processing time (w/o IO): $(now() - start)")
-
-
-    open("../related_posts_julia.json", "w") do f
-        JSON3.write(f, all_related_posts)
-    end
-end
+const topn = 5
 
 struct PostData
     _id::String
@@ -30,19 +15,18 @@ end
 struct RelatedPost
     _id::String
     tags::Vector{String}
-    related::SVector{5,PostData}
+    related::SVector{topn, PostData}
 end
 
 StructTypes.StructType(::Type{PostData}) = StructTypes.Struct()
 
-function fastmaxindex!(xs::Vector, topn, maxn, maxv)
-    maxn .= 1
-    maxv .= 0
+function fastmaxindex!(xs::Vector{T}, topn, maxn, maxv) where {T}
+    maxn .= one(T)
+    maxv .= zero(T)
     top = maxv[1]
     for (i, x) in enumerate(xs)
         if x > top
-            maxv[1] = x
-            maxn[1] = i
+            maxn[1], maxv[1] = i, x
             for j in 2:topn
                 if maxv[j-1] > maxv[j]
                     maxv[j-1], maxv[j] = maxv[j], maxv[j-1]
@@ -52,20 +36,12 @@ function fastmaxindex!(xs::Vector, topn, maxn, maxv)
             top = maxv[1]
         end
     end
-
     reverse!(maxn)
-
-    return maxn
+    return 
 end
 
 function related(posts)
-    for T in (UInt8, UInt16, UInt32, UInt64)
-        if length(posts) < typemax(T)
-            return related(T, posts)
-        end
-    end
-end
-function related(::Type{T}, posts) where {T}
+    T = UInt32
     topn = 5
     # key is every possible "tag" used in all posts
     # value is indicies of all "post"s that used this tag
@@ -80,11 +56,11 @@ function related(::Type{T}, posts) where {T}
     relatedposts = Vector{RelatedPost}(undef, length(posts))
     taggedpostcount = Vector{T}(undef, length(posts))
 
-    maxn = Vector{T}(undef,topn)
-    maxv = Vector{T}(undef,topn)
+    maxn = MVector{topn,T}(undef)
+    maxv = MVector{topn,T}(undef)
 
     for (i, post) in enumerate(posts)
-        taggedpostcount .= 0
+        taggedpostcount .= zero(T)
         # for each post (`i`-th)
         # and every tag used in the `i`-th post
         # give all related post +1 in `taggedpostcount` shadow vector
@@ -95,7 +71,7 @@ function related(::Type{T}, posts) where {T}
         end
 
         # don't self count
-        taggedpostcount[i] = 0
+        taggedpostcount[i] = zero(T)
 
         fastmaxindex!(taggedpostcount, topn, maxn, maxv)
 
@@ -106,4 +82,19 @@ function related(::Type{T}, posts) where {T}
     return relatedposts
 end
 
-const res = relatedIO()
+function main()
+    json_string = read(@__DIR__()*"/../../../posts.json", String)
+    posts = JSON3.read(json_string, Vector{PostData})
+    fake_posts = posts[1:2]
+    related(fake_posts) #warmup
+
+    start = now()
+    all_related_posts = related(posts)
+    println("Processing time (w/o IO): $(now() - start)")
+
+    open(@__DIR__()*"/../../../related_posts_julia.json", "w") do f
+        JSON3.write(f, all_related_posts)
+    end
+end
+
+end # module Related
